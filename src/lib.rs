@@ -31,7 +31,7 @@ pub struct Sender {
 }
 
 impl Sender {
-    async fn send(&mut self, msg: MessageData) -> Result<(), Box<dyn Error>> {
+    pub async fn send(&mut self, msg: MessageData) -> Result<(), Box<dyn Error>> {
         let transmission_delay =
             Duration::from_secs_f64((msg.len() as f64) / (self.settings.bandwidth as f64));
         let arrival_time =
@@ -53,7 +53,7 @@ impl Receiver {
     ///
     /// This function can block if no message is ready, or if the message
     /// is delayed because of the latency or bandwidth constraints of the channel.
-    async fn recv(&self) -> Result<MessageData, Box<dyn Error>> {
+    pub async fn recv(&self) -> Result<MessageData, Box<dyn Error>> {
         let (time, msg) = self.chan.recv().await?;
         Timer::at(time).await;
         Ok(msg)

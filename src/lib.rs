@@ -1,14 +1,13 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
+use std::time::Duration;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Measures bandwidth, in bytes / sec.
+pub type Bandwidth = u32;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+/// These are the settings configuring the performance properties of a channel.
+pub struct ChannelSettings {
+    /// The latency indicates how long each byte takes to travel from
+    /// the sender to the receiver.
+    pub latency: Duration,
+    /// How many bytes the channel can transmit per second.
+    pub bandwidth: Bandwidth,
 }

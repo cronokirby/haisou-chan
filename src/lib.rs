@@ -8,43 +8,58 @@ pub type MessageData = Vec<u8>;
 /// Measures bandwidth, in bytes / sec.
 pub type Bandwidth = u32;
 
-/// These are the settings configuring the performance properties of a channel.
-///
-/// A channel is constraint by its bandwidth, measuring how fast data can be
-/// pushed onto the channel, and its latency, measuring how long bytes
-/// take to transit from one end of the channel to the other.
-#[derive(Debug, Clone, Copy)]
-pub struct ChannelSettings {
-    /// The latency indicates how long each byte takes to travel from
-    /// the sender to the receiver.
-    pub latency: Duration,
-    /// How many bytes the channel can transmit per second.
-    pub bandwidth: Bandwidth,
-}
-
 /// Represents a sender for the channel.
+///
+/// This sender has a global bottleneck for everything being sent,
+/// representing the transmission delay for pushing bytes onto the network.
+///
+/// The sender will immediately return without blocking, however.
+/// This represents an operating system with an infinite sending buffer.
+/// In practice, there's also a delay here---which we do not model---but this setup
+/// is also equivalent to having an in library queue, by moving sending to a different
+/// thread, with an unbounded buffer in between.
 #[derive(Debug)]
 pub struct Sender {
-    settings: ChannelSettings,
-    last_time: Instant,
+    /// The bandwidth limiting our sending ability.
+    bandwidth: Option<Bandwidth>,
+    /// The next time the channel will be free to send data.
+    next_time: Instant,
     chan: channel::Sender<(Instant, MessageData)>,
 }
 
 impl Sender {
+    /// Send a message along this channel.
+    /// 
+    /// All messages share the same bandwidth, and will be delayed accordingly.
+    /// 
+    /// This function will not block though.
     pub async fn send(&mut self, msg: MessageData) -> Result<(), Box<dyn Error>> {
-        let transmission_delay =
-            Duration::from_secs_f64((msg.len() as f64) / (self.settings.bandwidth as f64));
-        let arrival_time =
-            Instant::now().max(self.last_time) + self.settings.latency + transmission_delay;
-        self.chan.send((arrival_time, msg)).await?;
-        self.last_time = arrival_time;
+        let transmission_delay = match self.bandwidth {
+            None => Duration::new(0, 0),
+            Some(bw) => Duration::from_secs_f64((msg.len() as f64) / (bw as f64)),
+        };
+        // The packet leaves after the channel is free again, and we've
+        // managed to push all of the data making up the packet.
+        let departure_time = Instant::now().max(self.next_time) + transmission_delay;
+        self.chan.send((departure_time, msg)).await?;
+        self.next_time = departure_time;
         Ok(())
+    }
+
+    /// Return a new sender with a different bandwidth.
+    pub async fn with_bandwidth(mut self, bandwidth: Bandwidth) -> Self {
+        self.bandwidth = Some(bandwidth);
+        self
     }
 }
 
 /// Represents a receiver for the channel.
+/// 
+/// This receiver will be delayed because of the upstream bandwidth constraints,
+/// along with its individual latency constraints.
 #[derive(Debug)]
 pub struct Receiver {
+    latency: Option<Duration>,
     chan: channel::Receiver<(Instant, MessageData)>,
 }
 
@@ -55,23 +70,46 @@ impl Receiver {
     /// is delayed because of the latency or bandwidth constraints of the channel.
     pub async fn recv(&self) -> Result<MessageData, Box<dyn Error>> {
         let (time, msg) = self.chan.recv().await?;
+        let time = match self.latency {
+            None => time,
+            Some(l) => time + l,
+        };
         Timer::at(time).await;
         Ok(msg)
+    }
+
+    /// Create a new receiver with a set amount of latency.
+    pub async fn with_latency(mut self, latency: Duration) -> Self {
+        self.latency = Some(latency);
+        self
     }
 }
 
 /// Creates a delayed channel.
 ///
-/// This channel is intended to have one sender and one receiver,
-/// and will also simulate the delay of
-pub fn channel(settings: ChannelSettings) -> (Sender, Receiver) {
+/// This channel is delayed because of the transmission delay of the sender,
+/// bottlenecked by the speed of the link, and because of the latency to
+/// the receiver.
+///
+/// By default, the receiver will have no latency, and the [`Receiver::with_latency`]
+/// method can be used to add a latency.
+///
+/// Similarly, the sender will have no bandwidth constraint by default,
+/// and the [`Sender::with_bandwidth`] method can be used to add once.
+///
+/// These channels are also packet based, in the sense that senders transmit
+/// an entire packet
+pub fn channel() -> (Sender, Receiver) {
     let (sender, receiver) = channel::unbounded();
     (
         Sender {
-            settings,
-            last_time: Instant::now(),
+            bandwidth: None,
+            next_time: Instant::now(),
             chan: sender,
         },
-        Receiver { chan: receiver },
+        Receiver {
+            latency: None,
+            chan: receiver,
+        },
     )
 }

@@ -47,7 +47,7 @@ impl<T: 'static> Sender<T> {
     }
 
     /// Set the bandwidth of this sender.
-    pub async fn set_bandwidth(&mut self, bandwidth: Bandwidth) {
+    pub fn set_bandwidth(&mut self, bandwidth: Bandwidth) {
         self.bandwidth = Some(bandwidth);
     }
 }
@@ -78,7 +78,7 @@ impl<T> Receiver<T> {
     }
 
     /// Set the latency of this receiver.
-    pub async fn set_latency(&mut self, latency: Duration) {
+    pub fn set_latency(&mut self, latency: Duration) {
         self.latency = Some(latency)
     }
 }

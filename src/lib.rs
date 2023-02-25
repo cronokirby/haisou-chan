@@ -19,24 +19,24 @@ pub type Bandwidth = u32;
 /// is also equivalent to having an in library queue, by moving sending to a different
 /// thread, with an unbounded buffer in between.
 #[derive(Debug)]
-pub struct Sender {
+pub struct Sender<T> {
     /// The bandwidth limiting our sending ability.
     bandwidth: Option<Bandwidth>,
     /// The next time the channel will be free to send data.
     next_time: Instant,
-    chan: channel::Sender<(Instant, MessageData)>,
+    chan: channel::Sender<(Instant, T)>,
 }
 
-impl Sender {
+impl<T: 'static> Sender<T> {
     /// Send a message along this channel.
-    /// 
+    ///
     /// All messages share the same bandwidth, and will be delayed accordingly.
-    /// 
+    ///
     /// This function will not block though.
-    pub async fn send(&mut self, msg: MessageData) -> Result<(), Box<dyn Error>> {
+    pub async fn send(&mut self, size: usize, msg: T) -> Result<(), Box<dyn Error>> {
         let transmission_delay = match self.bandwidth {
             None => Duration::new(0, 0),
-            Some(bw) => Duration::from_secs_f64((msg.len() as f64) / (bw as f64)),
+            Some(bw) => Duration::from_secs_f64((size as f64) / (bw as f64)),
         };
         // The packet leaves after the channel is free again, and we've
         // managed to push all of the data making up the packet.
@@ -46,29 +46,28 @@ impl Sender {
         Ok(())
     }
 
-    /// Return a new sender with a different bandwidth.
-    pub async fn with_bandwidth(mut self, bandwidth: Bandwidth) -> Self {
+    /// Set the bandwidth of this sender.
+    pub async fn set_bandwidth(&mut self, bandwidth: Bandwidth) {
         self.bandwidth = Some(bandwidth);
-        self
     }
 }
 
 /// Represents a receiver for the channel.
-/// 
+///
 /// This receiver will be delayed because of the upstream bandwidth constraints,
 /// along with its individual latency constraints.
 #[derive(Debug)]
-pub struct Receiver {
+pub struct Receiver<T> {
     latency: Option<Duration>,
-    chan: channel::Receiver<(Instant, MessageData)>,
+    chan: channel::Receiver<(Instant, T)>,
 }
 
-impl Receiver {
+impl<T> Receiver<T> {
     /// Receive a message along the channel.
     ///
     /// This function can block if no message is ready, or if the message
     /// is delayed because of the latency or bandwidth constraints of the channel.
-    pub async fn recv(&self) -> Result<MessageData, Box<dyn Error>> {
+    pub async fn recv(&self) -> Result<T, Box<dyn Error>> {
         let (time, msg) = self.chan.recv().await?;
         let time = match self.latency {
             None => time,
@@ -78,10 +77,9 @@ impl Receiver {
         Ok(msg)
     }
 
-    /// Create a new receiver with a set amount of latency.
-    pub async fn with_latency(mut self, latency: Duration) -> Self {
-        self.latency = Some(latency);
-        self
+    /// Set the latency of this receiver.
+    pub async fn set_latency(&mut self, latency: Duration) {
+        self.latency = Some(latency)
     }
 }
 
@@ -99,7 +97,7 @@ impl Receiver {
 ///
 /// These channels are also packet based, in the sense that senders transmit
 /// an entire packet
-pub fn channel() -> (Sender, Receiver) {
+pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
     let (sender, receiver) = channel::unbounded();
     (
         Sender {
